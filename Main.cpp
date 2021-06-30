@@ -9,20 +9,76 @@
 #include <set>
 #include "md5.h"
 #include "md5.cpp"
+#include <sqlite3.h>
+
+
 using namespace std;
 
+// Sql callback
+static int callback(void *data, int argc, char **argv, char **azColName){
+    int i;
+    fprintf(stderr, "%s: ", (const char*)data);
+
+//    for(i = 0; i<argc; i++){
+//        printf("%s = %s\n", azColName[i], argv[i] ? argv[i] : "NULL");
+//    }
+    return 0;
+}
+
+
 int main() {
+
     fstream db, names, q;
-    db.open("/home/ruslan/PycharmProjects/Hash_test/test_data/smu_db.fasta");
-    names.open("/home/ruslan/PycharmProjects/Hash_test/test_data/smu_ids.tsv");
-    q.open("/home/ruslan/PycharmProjects/Hash_test/test_data/GCA_000829155.1.fasta");
-    if ((db) && (names) && (q)) {
-        cout << "YAS\n";
+
+    // Sql variables
+    sqlite3 *sql_db;
+    char *zErrMsg = 0;
+    int rc;
+    char *sql;
+
+    // Open sql database
+    rc = sqlite3_open("hash_database.db", &sql_db);
+    if (rc) {
+        fprintf(stderr, "Can't open sql database: %s\n", sqlite3_errmsg(sql_db));
+        return(0);
+    }
+    else {
+        fprintf(stdout, "Sql database opened successfully\n");
     }
 
-    // ЧИТАЕМ ФАЙЛ NAMES
+    // Create table in sql database
+    sql = "CREATE TABLE HASHED("  \
+      "ID INT PRIMARY KEY     NOT NULL," \
+      "HASH        CHAR(50));";
+
+    rc = sqlite3_exec(sql_db, sql, callback, 0, &zErrMsg);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+        sqlite3_free(zErrMsg);
+        return(0);
+    }
+    else {
+        fprintf(stdout, "Table created successfully\n");
+    }
+
+    // Open files
+    db.open("/home/ruslan/PycharmProjects/Hash_test/test_data/smu_db.fasta"); // simple db
+//    db.open("/home/ruslan/PycharmProjects/Hash_test/test_data/all_prokaryotes_ipg.fasta"); // big db
+    names.open("/home/ruslan/PycharmProjects/Hash_test/test_data/smu_ids.tsv"); // table id - protein
+    q.open("/home/ruslan/PycharmProjects/Hash_test/test_data/GCA_000829155.1.fasta"); // выборка
+
+    // Success if everything is open
+    if ((db) && (names) && (q)) {
+        fprintf(stdout, "Files opened successfully\n");
+    }
+    else {
+        fprintf(stderr, "Can't one or more files: %s\n", sqlite3_errmsg(sql_db));
+        return(0);
+    }
+
+    // Read file "names" (id - protein)
     string line, field;
-    vector< vector<string> > array;  // the 2D array
+    vector< vector<string> > id_protein;  // the 2D array
     vector<string> v;                // array of values for one line only
     while (getline(names, line)) {
         v.clear();
@@ -31,37 +87,44 @@ int main() {
         {
             v.push_back(field);  // add each field to the 1D array
         }
-        array.push_back(v);  // add the 1D array to the 2D array
+        id_protein.push_back(v);  // add the 1D array to the 2D array
     }
 
-//    for (size_t i=0; i<array.size(); ++i)
-//    {
-//        for (size_t j=0; j<array[i].size(); ++j)
-//        {
-//            cout << array[i][j] << ' ';
+    // Now we have an array id - protein
+
+//    Print an array id - protein
+//    for (size_t i=0; i<id_protein.size(); ++i) {
+//        for (size_t j=0; j<id_protein[i].size(); ++j) {
+//            cout << id_protein[i][j] << ' ';
 //        }
 //        cout << "\n";
 //    }
 
-    // Теперь у нас есть массив код - фигня
-
-
-
-    vector< vector<string> > databa;
-
-    // ПАРСИМ ФАСТУ ДБ
+    // Read protein database file
     string name, content;
+    int length_of_db = 0;
     while (getline(db, line).good()) {
         v.clear();
         if (line.empty() || line[0] == '>') { // Identifier marker
             if (!name.empty()) { // Print out what we read from the last entry
-//                cout << name << " : " << content << endl;
                 size_t dot_pos = name.find(".");
                 string cut_name = name.substr(0, dot_pos);
-//                cout << cut_name << "\n";
-                v.push_back(cut_name);
-                v.push_back(content);
-                databa.push_back(v);
+                string hashed_content = md5(content);
+                string id = "NOT FOUND";
+                int flag = 0;
+                for (size_t p = 0; p < id_protein.size(), flag == 0; ++p) {
+                    if (cut_name == id_protein[p][1]) {
+                        id = id_protein[p][0];
+                        flag = 1;
+                    }
+                }
+
+                if (id != "NOT FOUND") {
+                    string s = "INSERT INTO HASHED (ID,HASH) VALUES (" + id +  ", '" + hashed_content + "'); ";
+                    sql = &s[0];
+                    rc = sqlite3_exec(sql_db, sql, callback, 0, &zErrMsg);
+                    length_of_db++;
+                }
                 name.clear();
             }
             if (!line.empty()) {
@@ -78,70 +141,52 @@ int main() {
         }
     }
     if (!name.empty()) { // Print out what we read from the last entry
-//        cout << name << " : " << content << endl;
+
         size_t dot_pos = name.find(".");
         string cut_name = name.substr(0, dot_pos);
-        v.push_back(cut_name);
-        v.push_back(content);
-        databa.push_back(v);
-    }
-//    for (size_t i=0; i<databa.size(); ++i) {
-//        for (size_t j=0; j<databa[i].size(); ++j)
-//        {
-//            cout << databa[i][j] << ' ';
-//        }
-//        cout << "\n";
-//    }
-
-    // Теперь у нас есть массив фигня - её последовательность
-
-
-    // ХЕШИРУЕМ
-
-    vector< vector<string> > dictionary;
-
-    for (size_t i=0; i<databa.size(); ++i) {
-        v.clear();
-        string this_name = databa[i][0];
-//            cout << this_name;
-        string this_code = "NOT_FOUND";
-        string this_seq = databa[i][1];
-        string this_hash = md5(this_seq);
-
+        string hashed_content = md5(content);
+        string id = "NOT FOUND";
         int flag = 0;
-        for (size_t p = 0; p < array.size(), flag == 0; ++p) {
-            if (this_name == array[p][1]) {
-                this_code = array[p][0];
+        for (size_t p = 0; p < id_protein.size(), flag == 0; ++p) {
+            if (cut_name == id_protein[p][1]) {
+                id = id_protein[p][0];
                 flag = 1;
             }
         }
 
-        v.push_back(this_code);
-        v.push_back(this_hash);
-        dictionary.push_back(v);
-    }
-
-    for (size_t i=0; i<dictionary.size(); ++i) {
-        for (size_t j=0; j<dictionary[i].size(); ++j) {
-            cout << dictionary[i][j] << ' ';
+        if (id != "NOT FOUND") {
+            string s = "INSERT INTO HASHED (ID,HASH) VALUES (" + id +  ", " + hashed_content + "); ";
+            sql = &s[0];
+            rc = sqlite3_exec(sql_db, sql, callback, 0, &zErrMsg);
+            length_of_db++;
         }
-        cout << "\n";
     }
 
-    // Получили словарь код - хэш
+    cout << length_of_db << " proteins are successfully added to sql db\n";
 
+    // Now we have an sql db
+
+    // Print the database
+//    const char* data = "Callback function called";
+//    sql = "SELECT * from HASHED";
+//    rc = sqlite3_exec(sql_db, sql, callback, (void*)data, &zErrMsg);
+//
+//    if( rc != SQLITE_OK ) {
+//        fprintf(stderr, "SQL error: %s\n", zErrMsg);
+//        sqlite3_free(zErrMsg);
+//    } else {
+//        fprintf(stdout, "Operation done successfully\n");
+//    }
+
+    // Open the query file, preparing a set for the query
     set <string> st;
-
-    // РАСЧЕХЛЯЕМ Q-ФАЙЛ, создаём сет хешей для запроса
 
     while (getline(q, line).good()) {
         v.clear();
         if (line.empty() || line[0] == '>') { // Identifier marker
             if (!name.empty()) { // Print out what we read from the last entry
-//                cout << name << " : " << content << endl;
                 size_t dot_pos = name.find(".");
                 string cut_name = name.substr(0, dot_pos);
-//                cout << cut_name << "\n";
                 st.insert(md5(content));
                 name.clear();
             }
@@ -159,7 +204,6 @@ int main() {
         }
     }
     if (!name.empty()) { // Print out what we read from the last entry
-//        cout << name << " : " << content << endl;
         size_t dot_pos = name.find(".");
         string cut_name = name.substr(0, dot_pos);
         st.insert(md5(content));
@@ -172,26 +216,28 @@ int main() {
     set <string> :: iterator it = st.begin();
     for (int i = 1; it != st.end(); i++, it++) {
         string this_hash = *it;
-//        cout << this_hash << "\n";
-        for (size_t p = 0; p < dictionary.size(); ++p) {
-            if (this_hash == dictionary[p][1]) {
-                st_found.insert(this_hash);
-                counter++;
-            }
+
+        string s = "SELECT EXISTS (SELECT 1 FROM HASHED WHERE HASH = '" + this_hash + "')";
+        sql = &s[0];
+        rc = sqlite3_exec(sql_db, sql, callback, 0, &zErrMsg);
+        if (rc == false) {
+            st_found.insert(this_hash);
+            counter++;
         }
+
         total = i;
     }
 
     set <string> :: iterator it_found = st_found.begin();
 
     cout << counter << " of " << total << " found in the database\n";
-
     cout << "The present IPGs are:\n";
 
     for (int i = 1; it_found != st_found.end(); i++, it_found++) {
         cout << *it_found << "\n";
     }
 
+    sqlite3_close(sql_db);
 
     return 1;
 }
